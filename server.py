@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration
-HTTP_PORT = 8000  # Port for HTTP server
+HTTP_PORT = int(os.environ.get("PORT", 8000))  # Port for HTTP server
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # Initialize the Gemini GenAI client
@@ -99,9 +99,35 @@ async def serve_static_file(request):
         return web.Response(text="Internal server error", status=500)
 
 
+from aiohttp import BasicAuth
+
+APP_USERNAME = os.environ.get("APP_USERNAME", "andre")
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+
+@web.middleware
+async def auth_middleware(request, handler):
+    if not APP_PASSWORD:
+        # Pas de mot de passe configuré : on laisse passer (utile en dev local)
+        return await handler(request)
+
+    auth_header = request.headers.get("Authorization")
+    if auth_header:
+        try:
+            auth = BasicAuth.decode(auth_header)
+            if auth.login == APP_USERNAME and auth.password == APP_PASSWORD:
+                return await handler(request)
+        except ValueError:
+            pass
+
+    return web.Response(
+        status=401,
+        headers={"WWW-Authenticate": 'Basic realm="LiveTranslate"'},
+        text="Authentification requise",
+    )
+
 async def main():
     """Starts the HTTP server."""
-    app = web.Application()
+    app = web.Application(middlewares=[auth_middleware])
     
     # API endpoints
     app.router.add_post("/api/token", get_ephemeral_token)
