@@ -14,7 +14,7 @@ const FIXED_CONFIG = {
   temperature: 0.8,
   automaticActivityDetection: {
     disabled: false,
-    silence_duration_ms: 500,
+    silence_duration_ms: 800,
     prefix_padding_ms: 500,
     end_of_speech_sensitivity: "END_SENSITIVITY_UNSPECIFIED",
     start_of_speech_sensitivity: "START_SENSITIVITY_UNSPECIFIED",
@@ -38,6 +38,8 @@ const state = {
   client: null,
   audio: { streamer: null, player: null },
   isConnected: false,
+  manualPause: false,
+  echoMuted: false,
 };
 
 const elements = {};
@@ -45,7 +47,7 @@ let inBuffer = "";
 let outBuffer = "";
 
 function initDOM() {
-  ["targetLang", "mainBtn", "statusText", "lineIn", "lineOut", "volume"].forEach(
+  ["targetLang", "mainBtn", "pauseBtn", "statusText", "lineIn", "lineOut", "subtitlesLog", "volume"].forEach(
     (id) => (elements[id] = document.getElementById(id))
   );
 }
@@ -54,16 +56,36 @@ function setStatus(text) {
   elements.statusText.textContent = text;
 }
 
-function updateSubtitle(which, textChunk, finished) {
-  if (which === "in") {
-    if (!finished) inBuffer += textChunk;
-    elements.lineIn.textContent = inBuffer;
-    if (finished) setTimeout(() => { inBuffer = ""; elements.lineIn.textContent = ""; }, 4000);
-  } else {
-    if (!finished) outBuffer += textChunk;
-    elements.lineOut.textContent = outBuffer;
-    if (finished) setTimeout(() => { outBuffer = ""; elements.lineOut.textContent = ""; }, 4000);
+function updateMicState() {
+  if (state.audio.streamer) {
+    state.audio.streamer.setMuted(state.manualPause || state.echoMuted);
   }
+}
+
+function updateSubtitle(which, textChunk) {
+  if (which === "in") {
+    inBuffer += textChunk;
+    elements.lineIn.textContent = inBuffer;
+  } else {
+    outBuffer += textChunk;
+    elements.lineOut.textContent = outBuffer;
+  }
+}
+
+function archiveSubtitles() {
+  if (inBuffer.trim() || outBuffer.trim()) {
+    const entry = document.createElement("div");
+    entry.className = "log-entry";
+    entry.innerHTML = `
+      <div class="in">${inBuffer.trim()}</div>
+      <div class="out">${outBuffer.trim()}</div>
+    `;
+    elements.subtitlesLog.prepend(entry);
+  }
+  inBuffer = "";
+  outBuffer = "";
+  elements.lineIn.textContent = "";
+  elements.lineOut.textContent = "";
 }
 
 async function connect() {
@@ -105,6 +127,7 @@ async function connect() {
     elements.mainBtn.textContent = "Arrêter";
     elements.mainBtn.classList.add("active");
     elements.targetLang.disabled = true;
+    elements.pauseBtn.disabled = false;
   } catch (error) {
     console.error("Connection failed:", error);
     setStatus("Erreur : " + error.message);
@@ -128,9 +151,15 @@ function disconnect() {
   }
 
   state.isConnected = false;
+  state.manualPause = false;
+  state.echoMuted = false;
+
   elements.mainBtn.textContent = "Démarrer";
   elements.mainBtn.classList.remove("active");
   elements.targetLang.disabled = false;
+  elements.pauseBtn.disabled = true;
+  elements.pauseBtn.textContent = "⏸";
+  elements.pauseBtn.classList.remove("paused");
   setStatus("Prêt");
 }
 
@@ -142,27 +171,39 @@ function toggleMain() {
   }
 }
 
+function togglePause() {
+  if (!state.isConnected) return;
+  state.manualPause = !state.manualPause;
+  updateMicState();
+  elements.pauseBtn.textContent = state.manualPause ? "▶" : "⏸";
+  elements.pauseBtn.classList.toggle("paused", state.manualPause);
+  setStatus(state.manualPause ? "En pause" : "En écoute");
+}
+
 function handleMessage(message) {
   switch (message.type) {
     case MultimodalLiveResponseType.AUDIO:
-      if (state.audio.streamer) state.audio.streamer.setMuted(true);
+      state.echoMuted = true;
+      updateMicState();
       if (state.audio.player) state.audio.player.play(message.data);
-      setStatus("Traduction en cours");
+      setStatus(state.manualPause ? "En pause" : "Traduction en cours");
       break;
 
     case MultimodalLiveResponseType.TURN_COMPLETE:
+      archiveSubtitles();
       setTimeout(() => {
-        if (state.audio.streamer) state.audio.streamer.setMuted(false);
-        setStatus("En écoute");
+        state.echoMuted = false;
+        updateMicState();
+        setStatus(state.manualPause ? "En pause" : "En écoute");
       }, 300);
       break;
 
     case MultimodalLiveResponseType.INPUT_TRANSCRIPTION:
-      updateSubtitle("in", message.data.text, message.data.finished);
+      updateSubtitle("in", message.data.text);
       break;
 
     case MultimodalLiveResponseType.OUTPUT_TRANSCRIPTION:
-      updateSubtitle("out", message.data.text, message.data.finished);
+      updateSubtitle("out", message.data.text);
       break;
 
     case MultimodalLiveResponseType.SETUP_COMPLETE:
@@ -183,6 +224,7 @@ function updateVolume() {
 
 function initEventListeners() {
   elements.mainBtn.addEventListener("click", toggleMain);
+  elements.pauseBtn.addEventListener("click", togglePause);
   elements.volume.addEventListener("input", updateVolume);
 }
 
