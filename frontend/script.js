@@ -6,7 +6,10 @@ const LANGUAGES = {
   ky: "kirghize",
   tr: "turc",
   uz: "ouzbek",
+  ru: "russe",
+  es: "espagnol",
 };
+
 
 const FIXED_CONFIG = {
   model: "gemini-3.1-flash-live-preview",
@@ -22,8 +25,13 @@ const FIXED_CONFIG = {
   activityHandling: "ACTIVITY_HANDLING_UNSPECIFIED",
 };
 
-function buildSystemInstruction(langName) {
-  return `Tu es un interprète vocal simultané entre le français et le ${langName}. Tu n'es PAS un assistant conversationnel — tu ne réponds jamais aux questions, tu ne donnes jamais d'opinion, tu ne commentes jamais.
+function buildSystemInstruction(langCode, langName) {
+  let variantNote = "";
+  if (langCode === "es") {
+    variantNote = " Utilise spécifiquement l'espagnol mexicain (vocabulaire, expressions et prononciation), pas l'espagnol castillan d'Espagne.";
+  }
+
+  return `Tu es un interprète vocal simultané entre le français et le ${langName}.${variantNote} Tu n'es PAS un assistant conversationnel — tu ne réponds jamais aux questions, tu ne donnes jamais d'opinion, tu ne commentes jamais.
 
 Règles strictes :
 1. Écoute l'audio entrant. S'il est en français, traduis-le immédiatement à voix haute en ${langName}, de façon fluide et naturelle.
@@ -41,6 +49,36 @@ const state = {
   manualPause: false,
   echoMuted: false,
 };
+
+let wakeLock = null;
+
+async function acquireWakeLock() {
+  try {
+    if ("wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => {
+        console.log("Wake lock relâché");
+      });
+    }
+  } catch (err) {
+    console.warn("Wake lock non disponible:", err.message);
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release();
+    wakeLock = null;
+  }
+}
+
+// Le wake lock est automatiquement relâché quand l'onglet perd le focus.
+// On le ré-acquiert s'il redevient visible pendant qu'une session est active.
+document.addEventListener("visibilitychange", async () => {
+  if (state.isConnected && document.visibilityState === "visible" && !wakeLock) {
+    await acquireWakeLock();
+  }
+});
 
 const elements = {};
 let inBuffer = "";
@@ -100,7 +138,7 @@ async function connect() {
     const langName = LANGUAGES[langCode];
 
     state.client = new GeminiLiveAPI(token, FIXED_CONFIG.model);
-    state.client.systemInstructions = buildSystemInstruction(langName);
+    state.client.systemInstructions = buildSystemInstruction(langCode, langName);
     state.client.inputAudioTranscription = true;
     state.client.outputAudioTranscription = true;
     state.client.responseModalities = ["AUDIO"];
@@ -123,6 +161,7 @@ async function connect() {
 
     await state.audio.streamer.start();
     state.isConnected = true;
+    await acquireWakeLock();
 
     elements.mainBtn.textContent = "Arrêter";
     elements.mainBtn.classList.add("active");
@@ -151,6 +190,7 @@ function disconnect() {
   }
 
   state.isConnected = false;
+  releaseWakeLock();
   state.manualPause = false;
   state.echoMuted = false;
 

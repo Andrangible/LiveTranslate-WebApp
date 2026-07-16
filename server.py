@@ -104,10 +104,14 @@ from aiohttp import BasicAuth
 APP_USERNAME = os.environ.get("APP_USERNAME", "andre")
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
+PUBLIC_PATHS = {"/manifest.json", "/sw.js"}
+
 @web.middleware
 async def auth_middleware(request, handler):
     if not APP_PASSWORD:
-        # Pas de mot de passe configuré : on laisse passer (utile en dev local)
+        return await handler(request)
+
+    if request.path in PUBLIC_PATHS or request.path.startswith("/icons/"):
         return await handler(request)
 
     auth_header = request.headers.get("Authorization")
@@ -143,15 +147,15 @@ async def main():
     
     print(f"""
 ╔════════════════════════════════════════════════════════════╗
-║     Gemini Live API Server (Ephemeral Token Approach)     ║
+║     Gemini Live API Server (Ephemeral Token Approach)      ║
 ╠════════════════════════════════════════════════════════════╣
 ║                                                            ║
-║  📱 Web Interface: http://localhost:{HTTP_PORT:<5}                   ║
+║  📱 Web Interface: http://localhost:{HTTP_PORT:<5}         ║
 ║  🔑 API Endpoint:  POST /api/token                         ║
 ║                                                            ║
 ║  Instructions:                                             ║
 ║  1. Ensure GOOGLE_API_KEY is set in your environment       ║
-║  2. Open http://localhost:{HTTP_PORT} in your browser              ║
+║  2. Open http://localhost:{HTTP_PORT} in your browser      ║
 ║  3. Click Connect to start!                                ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
