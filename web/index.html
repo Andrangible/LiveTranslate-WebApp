@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>LiveTranslate</title>
+  <meta name="description" content="Free two-way voice interpreter, powered by your own Gemini key." />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#111318" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LiveTranslate" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div class="app">
+    <header>
+      <h1>LiveTranslate</h1>
+      <div class="header-actions">
+        <button id="shareBtn" class="icon-btn" data-i18n-title="share">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
+        </button>
+        <button id="settingsBtn" class="icon-btn" data-i18n-title="settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="lang-pair">
+      <select id="langA" aria-label="Language A"></select>
+      <button id="swapBtn" class="icon-btn small" data-i18n-title="swap">⇄</button>
+      <select id="langB" aria-label="Language B"></select>
+    </div>
+
+    <div class="btn-row">
+      <button id="replayBtn" class="side-btn" data-i18n-title="replay" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>
+      </button>
+      <button id="mainBtn" class="main-btn" data-i18n="start">Start</button>
+      <button id="pauseBtn" class="side-btn" data-i18n-title="pause" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
+      </button>
+    </div>
+
+    <div id="statusText" class="status" role="status" data-i18n="statusReady">Ready</div>
+
+    <div class="subtitles">
+      <div class="live-line">
+        <div id="lineIn" class="line-in"></div>
+        <div id="lineOut" class="line-out"></div>
+      </div>
+      <div id="subtitlesLog" class="subtitles-log"></div>
+    </div>
+
+    <div class="volume-row">
+      <label for="volume" data-i18n="volume">Volume</label>
+      <input type="range" id="volume" min="0" max="100" value="80" />
+    </div>
+  </div>
+
+  <!-- Assistant de configuration de la clé API -->
+  <dialog id="wizard" class="sheet">
+    <h2 data-i18n="wizTitle"></h2>
+
+    <section data-step="1">
+      <h3 data-i18n="wiz1Title"></h3>
+      <p data-i18n="wiz1Body"></p>
+      <p data-i18n="wiz1Need"></p>
+      <p class="hint" data-i18n="wiz1Privacy"></p>
+      <div class="actions">
+        <button class="primary" data-goto="2" data-i18n="next"></button>
+      </div>
+    </section>
+
+    <section data-step="2" hidden>
+      <h3 data-i18n="wiz2Title"></h3>
+      <ol class="steps">
+        <li data-i18n="wiz2Step1"></li>
+        <li data-i18n="wiz2Step2"></li>
+        <li data-i18n="wiz2Step3"></li>
+        <li data-i18n="wiz2Step4"></li>
+      </ol>
+      <a id="aiStudioLink" class="primary button-link" href="https://aistudio.google.com/apikey" target="_blank"
+        rel="noopener" data-i18n="wiz2Open"></a>
+      <div class="actions">
+        <button data-goto="1" data-i18n="back"></button>
+        <button class="primary" data-goto="3" data-i18n="wiz2Done"></button>
+      </div>
+    </section>
+
+    <section data-step="3" hidden>
+      <h3 data-i18n="wiz3Title"></h3>
+      <p data-i18n="wiz3Body"></p>
+      <div class="key-input">
+        <input id="keyInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+          data-i18n-placeholder="wiz3Placeholder" />
+        <button id="pasteBtn" data-i18n="wiz3Paste"></button>
+      </div>
+      <p id="keyMsg" class="msg" role="status"></p>
+      <p class="hint" data-i18n="wiz3OtherDevice"></p>
+      <div class="actions">
+        <button data-goto="2" data-i18n="back"></button>
+        <button id="saveKeyBtn" class="primary" data-i18n="wiz3Save"></button>
+      </div>
+    </section>
+    <button id="wizardClose" class="close-x" data-i18n-title="close" hidden>✕</button>
+  </dialog>
+
+  <!-- Réglages -->
+  <dialog id="settings" class="sheet">
+    <h2 data-i18n="settings"></h2>
+    <button class="close-x" data-close data-i18n-title="close">✕</button>
+
+    <h3 data-i18n="setKeys"></h3>
+    <ul id="keyList" class="key-list"></ul>
+    <div class="actions left">
+      <button id="addKeyBtn" data-i18n="setKeyAdd"></button>
+      <button id="sendKeyBtn" data-i18n="setKeySend"></button>
+    </div>
+
+    <label class="field"><span data-i18n="setUiLang"></span><select id="uiLangSelect"></select></label>
+    <label class="field"><span data-i18n="setVoice"></span><select id="voiceSelect"></select></label>
+    <label class="field"><span data-i18n="setModel"></span><select id="modelSelect"></select></label>
+    <label class="check"><input type="checkbox" id="rawMicToggle" /> <span data-i18n="setRawMic"></span></label>
+    <p class="hint" data-i18n="setRawMicHint"></p>
+
+    <div class="actions left">
+      <button id="clearHistoryBtn" data-i18n="setClearHistory"></button>
+    </div>
+    <p class="hint" data-i18n="setAbout"></p>
+  </dialog>
+
+  <!-- QR code (partage de l'app ou envoi de la clé) -->
+  <dialog id="qrDialog" class="sheet">
+    <h2 id="qrTitle"></h2>
+    <button class="close-x" data-close data-i18n-title="close">✕</button>
+    <p id="qrBody"></p>
+    <div id="qrCode" class="qr"></div>
+    <div class="actions">
+      <button id="copyLinkBtn" data-i18n="shareCopy"></button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="alert" hidden></div>
+
+  <script src="vendor/qrcode.min.js"></script>
+  <script src="i18n.js"></script>
+  <script src="languages.js"></script>
+  <script src="geminilive.js"></script>
+  <script src="audio.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>

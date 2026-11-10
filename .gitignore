@@ -1,2 +1,7 @@
 .env
 appcredentials.txt
+appcrendentials.txt
+
+# Firebase
+.firebase/
+firebase-debug.log
