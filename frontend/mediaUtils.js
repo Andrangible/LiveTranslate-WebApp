@@ -29,9 +29,13 @@ class AudioStreamer {
       // Build audio constraints
       const audioConstraints = {
         sampleRate: this.sampleRate,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        // echoCancellation: true,
+        // noiseSuppression: true,
+        // autoGainControl: true,
+        //To work in car (echo cancellation is already managed by the app)
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
       };
 
       // Add device ID if specified

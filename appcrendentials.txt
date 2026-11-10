@@ -1,2 +1,0 @@
-username andre
-password comme wifi
