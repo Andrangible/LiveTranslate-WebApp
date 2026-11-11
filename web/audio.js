@@ -63,7 +63,7 @@ class PcmPlayer {
     this.audioContext = null;
     this.worklet = null;
     this.gain = null;
-    this.volume = 0.8;
+    this.volume = 1; // volume réglé avec les boutons du téléphone
     this.initPromise = null;
   }
 

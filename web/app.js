@@ -18,12 +18,20 @@ const KEY_RE = /AIza[0-9A-Za-z_-]{35}|AQ\.[0-9A-Za-z_-]{30,}/;
 const MAX_REPLAYABLE_TURNS = 20;
 const MAX_RECONNECT_ATTEMPTS = 3;
 const STORAGE_KEY = "livetranslate.settings.v1";
+const MAX_RECENT_LANGS = 5;
+const HISTORY_KEY = "livetranslate.history.v1";
+const HISTORY_LIMITS = [0, 50, 100, 200, 500, 1000]; // 0 = pas de sauvegarde (session seulement)
 
 /* ---------- Réglages persistants ---------- */
 
 function defaultSettings() {
-  const base = (navigator.language || "en").slice(0, 2).toLowerCase();
-  const langA = LANGUAGE_BY_CODE[base] ? base : "en";
+  // Langue du téléphone : code exact (es-ES), sinon première variante de la langue (zh → zh-CN)
+  const full = navigator.language || "en";
+  const base = full.slice(0, 2).toLowerCase();
+  const match =
+    LANGUAGES.find((l) => l.code.toLowerCase() === full.toLowerCase()) ||
+    LANGUAGES.find((l) => l.code === base || l.code.startsWith(base + "-"));
+  const langA = match ? match.code : "en";
   return {
     keys: [], // [{id, name, key}]
     activeKeyId: null,
@@ -34,7 +42,8 @@ function defaultSettings() {
     model: DEFAULT_MODEL,
     liveModels: [],
     rawMic: false,
-    volume: 80,
+    recentLangs: [], // 5 dernières langues utilisées, la plus récente en premier
+    historyLimit: 200, // nombre de traductions conservées sur l'appareil
   };
 }
 
@@ -44,6 +53,7 @@ function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
     if (saved) settings = { ...settings, ...saved };
+    if (!settings.recentLangs?.length) settings.recentLangs = [settings.langA, settings.langB];
   } catch (err) {
     console.warn("Réglages illisibles, valeurs par défaut utilisées:", err);
   }
@@ -66,10 +76,10 @@ function activeKey() {
 const el = {};
 function initDOM() {
   [
-    "langA", "langB", "swapBtn", "mainBtn", "pauseBtn", "replayBtn", "statusText", "lineIn", "lineOut",
-    "subtitlesLog", "volume", "shareBtn", "settingsBtn", "wizard", "wizardClose", "keyInput", "pasteBtn",
+    "langA", "langB", "swapBtn", "mainBtn", "mainIcon", "mainLabel", "pauseBtn", "replayBtn", "statusText", "lineIn", "lineOut",
+    "subtitlesLog", "shareBtn", "settingsBtn", "wizard", "wizardClose", "keyInput", "pasteBtn",
     "keyMsg", "saveKeyBtn", "aiStudioLink", "settings", "keyList", "addKeyBtn", "sendKeyBtn", "uiLangSelect",
-    "voiceSelect", "modelSelect", "rawMicToggle", "clearHistoryBtn", "qrDialog", "qrTitle", "qrBody", "qrCode",
+    "voiceSelect", "modelSelect", "rawMicToggle", "historyLimitSelect", "exportHistoryBtn", "clearHistoryBtn", "qrDialog", "qrTitle", "qrBody", "qrCode",
     "copyLinkBtn", "toast",
   ].forEach((id) => (el[id] = document.getElementById(id)));
 }
@@ -103,7 +113,10 @@ let wakeLock = null;
 
 // Tour en cours (transcriptions + audio du modèle) et historique rejouable
 let currentTurn = newTurn();
-const turnLog = []; // le plus récent en premier : {in, out, audio, node}
+// Le plus récent en premier : {ts, langA, langB, in, out, audio, node, button}.
+// Le texte est sauvegardé dans localStorage ; l'audio (≈ 3 Mo/min) reste en mémoire,
+// donc seules les traductions de la session en cours peuvent être réécoutées.
+const turnLog = [];
 let replaying = null;
 let replayTimer = null;
 
@@ -118,13 +131,33 @@ function refreshStatus() {
   if (session.error) text = session.error;
   else if (session.reconnecting) text = t("statusReconnecting");
   else if (!session.active) text = replaying ? t("statusReplaying") : t("statusReady");
-  else if (!session.client?.ready) text = t("statusConnecting");
+  else if (!session.client?.ready) text = t("statusWait");
   else if (session.manualPause) text = t("statusPaused");
   else if (replaying) text = t("statusReplaying");
   else if (session.echoMuted) text = t("statusTranslating");
   else text = t("statusListening");
   el.statusText.textContent = text;
   el.statusText.classList.toggle("error", !!session.error);
+  updateMainBtn();
+}
+
+/**
+ * Bouton principal : « connecting » (orange, sablier, pas de pulsation) tant que la
+ * session n'est pas prête, pour que personne ne parle avant ; « live » (rouge qui pulse)
+ * seulement une fois la connexion établie. Un appui pendant la connexion annule.
+ */
+function updateMainBtn() {
+  const state = !session.active ? "idle" : session.client?.ready && !session.reconnecting ? "live" : "connecting";
+  if (el.mainBtn.dataset.state === state) return;
+  const wasConnecting = el.mainBtn.dataset.state === "connecting";
+  el.mainBtn.dataset.state = state;
+  el.mainBtn.classList.toggle("active", state === "live");
+  el.mainBtn.classList.toggle("connecting", state === "connecting");
+  el.mainLabel.dataset.i18n = { idle: "start", connecting: "wait", live: "stop" }[state];
+  el.mainLabel.textContent = t(el.mainLabel.dataset.i18n);
+  el.mainIcon.innerHTML = { idle: MIC_ICON, connecting: WAIT_ICON, live: STOP_ICON }[state];
+  // Petite vibration quand on peut commencer à parler
+  if (wasConnecting && state === "live") navigator.vibrate?.(80);
 }
 
 function showError(reasonOrText, detail = "") {
@@ -175,6 +208,7 @@ async function startSession() {
   }
   clearError();
   stopReplay();
+  rememberRecentLangs(settings.langA, settings.langB);
 
   session.active = true;
   session.reconnectAttempts = 0;
@@ -184,7 +218,6 @@ async function startSession() {
 
   try {
     await player.init(); // pendant le geste utilisateur
-    player.setVolume(settings.volume / 100);
     session.mic = new MicStreamer(
       (chunk) => {
         if (session.client?.ready && !session.manualPause) session.client.sendAudio(chunk);
@@ -331,9 +364,7 @@ function togglePause() {
 }
 
 function setSessionUI(active) {
-  el.mainBtn.dataset.i18n = active ? "stop" : "start";
-  el.mainBtn.textContent = t(el.mainBtn.dataset.i18n);
-  el.mainBtn.classList.toggle("active", active);
+  updateMainBtn();
   el.langA.disabled = el.langB.disabled = el.swapBtn.disabled = active;
   el.pauseBtn.disabled = !active;
   if (!active) {
@@ -344,15 +375,20 @@ function setSessionUI(active) {
 
 /* ---------- Sous-titres et historique ---------- */
 
+const MIC_ICON = '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/>';
+const WAIT_ICON = '<path d="M7 3h10M7 21h10M8 3c0 5 8 6 8 9s-8 4-8 9M16 3c0 5-8 6-8 9s8 4 8 9"/>';
+const STOP_ICON = '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>';
 const PAUSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>';
 const PLAY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg>';
+const COPY_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
 const REPLAY_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>';
 
 /** Affiche un texte et le signale s'il n'est écrit dans aucune des deux langues. */
-function showLiveText(node, text) {
+function showLiveText(node, text, langA = settings.langA, langB = settings.langB) {
   node.textContent = text; // textContent : jamais de HTML issu des transcriptions
-  const suspect = !scriptMatchesPair(text, settings.langA, settings.langB);
+  const suspect = !scriptMatchesPair(text, langA, langB);
   node.classList.toggle("suspect", suspect);
   node.title = suspect ? t("suspectScript") : "";
 }
@@ -364,32 +400,16 @@ function archiveTurn() {
   showLiveText(el.lineOut, "");
   if (!turn.in.trim() && !turn.out.trim() && !turn.audio.length) return;
 
-  const node = document.createElement("div");
-  node.className = "log-entry";
-  const texts = document.createElement("div");
-  texts.className = "texts";
-  const inEl = document.createElement("div");
-  inEl.className = "in";
-  showLiveText(inEl, turn.in.trim());
-  const outEl = document.createElement("div");
-  outEl.className = "out";
-  showLiveText(outEl, turn.out.trim());
-  texts.append(inEl, outEl);
-  node.append(texts);
-
-  const entry = { in: turn.in, out: turn.out, audio: turn.audio, node, button: null };
-  if (turn.audio.length) {
-    const btn = document.createElement("button");
-    btn.className = "replay-small";
-    btn.title = t("replay");
-    btn.setAttribute("aria-label", btn.title);
-    btn.innerHTML = REPLAY_ICON;
-    btn.addEventListener("click", () => toggleReplay(entry));
-    node.append(btn);
-    entry.button = btn;
-  }
+  const entry = {
+    ts: Date.now(),
+    langA: settings.langA,
+    langB: settings.langB,
+    in: turn.in.trim(),
+    out: turn.out.trim(),
+    audio: turn.audio,
+  };
   turnLog.unshift(entry);
-  el.subtitlesLog.prepend(node);
+  el.subtitlesLog.prepend(renderLogEntry(entry));
 
   // On ne garde l'audio que des derniers tours (~48 Ko/s chacun)
   turnLog.slice(MAX_REPLAYABLE_TURNS).forEach((old) => {
@@ -397,7 +417,138 @@ function archiveTurn() {
     if (old.button) old.button.remove();
     old.button = null;
   });
+  saveHistory();
   updateReplayButton();
+}
+
+function formatEntryTime(ts) {
+  const d = new Date(ts);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const opts = sameDay ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  return new Intl.DateTimeFormat(uiLang, opts).format(d);
+}
+
+function renderLogEntry(entry) {
+  const node = document.createElement("div");
+  node.className = "log-entry";
+  const texts = document.createElement("div");
+  texts.className = "texts";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = formatEntryTime(entry.ts);
+  const inEl = document.createElement("div");
+  inEl.className = "in";
+  showLiveText(inEl, entry.in, entry.langA, entry.langB);
+  const outEl = document.createElement("div");
+  outEl.className = "out";
+  showLiveText(outEl, entry.out, entry.langA, entry.langB);
+  texts.append(meta, inEl, outEl);
+  node.append(texts);
+
+  const actions = document.createElement("div");
+  actions.className = "entry-actions";
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "replay-small";
+  copyBtn.title = t("copy");
+  copyBtn.setAttribute("aria-label", copyBtn.title);
+  copyBtn.innerHTML = COPY_ICON;
+  copyBtn.addEventListener("click", () => copyEntry(entry));
+  actions.append(copyBtn);
+  node.append(actions);
+
+  entry.node = node;
+  entry.button = null;
+  if (entry.audio?.length) {
+    const btn = document.createElement("button");
+    btn.className = "replay-small";
+    btn.title = t("replay");
+    btn.setAttribute("aria-label", btn.title);
+    btn.innerHTML = REPLAY_ICON;
+    btn.addEventListener("click", () => toggleReplay(entry));
+    actions.prepend(btn);
+    entry.button = btn;
+  }
+  return node;
+}
+
+/** Copie l'original et la traduction d'une entrée dans le presse-papiers. */
+async function copyEntry(entry) {
+  const text = [entry.in, entry.out].filter(Boolean).join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(t("copied"), 1500);
+  } catch (_) {
+    prompt("", text);
+  }
+}
+
+/* ---------- Historique sauvegardé ---------- */
+
+function loadHistory() {
+  if (!settings.historyLimit) return;
+  let saved = [];
+  try {
+    saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch (err) {
+    console.warn("Historique illisible:", err);
+  }
+  for (const h of saved.slice(0, settings.historyLimit)) {
+    const entry = { ts: h.ts, langA: h.langA, langB: h.langB, in: h.in || "", out: h.out || "", audio: [] };
+    turnLog.push(entry);
+    el.subtitlesLog.append(renderLogEntry(entry));
+  }
+}
+
+/** Sauvegarde le texte des N dernières traductions et retire de l'écran celles au-delà. */
+function saveHistory() {
+  const limit = settings.historyLimit;
+  if (limit) {
+    turnLog.splice(Math.max(limit, MAX_REPLAYABLE_TURNS)).forEach((old) => old.node.remove());
+  }
+  const data = turnLog
+    .slice(0, limit)
+    .map(({ ts, langA, langB, in: input, out }) => ({ ts, langA, langB, in: input, out }));
+  try {
+    if (data.length) localStorage.setItem(HISTORY_KEY, JSON.stringify(data));
+    else localStorage.removeItem(HISTORY_KEY);
+  } catch (err) {
+    console.warn("Impossible de sauvegarder l'historique:", err);
+  }
+}
+
+/** Export en texte lisible : feuille de partage du téléphone si possible, sinon téléchargement. */
+async function exportHistory() {
+  if (!turnLog.length) {
+    showToast(t("historyEmpty"));
+    return;
+  }
+  const dateTime = new Intl.DateTimeFormat(uiLang, { dateStyle: "medium", timeStyle: "short" });
+  const lines = [`LiveTranslate — ${t("historyExportTitle")} — ${dateTime.format(new Date())}`, ""];
+  for (const h of [...turnLog].reverse()) {
+    lines.push(`${dateTime.format(new Date(h.ts))} · ${languageLabel(h.langA, uiLang)} ↔ ${languageLabel(h.langB, uiLang)}`);
+    if (h.in) lines.push(`  > ${h.in}`);
+    if (h.out) lines.push(`  < ${h.out}`);
+    lines.push("");
+  }
+  const name = `livetranslate-${new Date().toISOString().slice(0, 10)}.txt`;
+  const file = new File([lines.join("\n")], name, { type: "text/plain" });
+
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: name });
+      return;
+    } catch (err) {
+      if (err.name === "AbortError") return; // l'utilisateur a fermé la feuille de partage
+    }
+  }
+  const url = URL.createObjectURL(file);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 function lastReplayable() {
@@ -413,6 +564,7 @@ function clearHistory() {
   stopReplay();
   turnLog.length = 0;
   el.subtitlesLog.textContent = "";
+  saveHistory();
   updateReplayButton();
 }
 
@@ -436,7 +588,6 @@ async function playReplay(entry) {
   if (session.echoMuted) return;
 
   await player.init(); // geste utilisateur → AudioContext autorisé même hors session
-  player.setVolume(settings.volume / 100);
   player.interrupt();
 
   replaying = entry;
@@ -469,18 +620,36 @@ function endReplay() {
 
 /* ---------- Langues ---------- */
 
-function renderLanguageSelects() {
-  const sorted = [...LANGUAGES].sort((a, b) =>
-    languageLabel(a.code, uiLang).localeCompare(languageLabel(b.code, uiLang), uiLang)
+/** Place la paire utilisée en tête des langues récentes (max 5). */
+function rememberRecentLangs(codeA, codeB) {
+  const recent = [codeA, codeB, ...settings.recentLangs].filter(
+    (c, i, all) => LANGUAGE_BY_CODE[c] && all.indexOf(c) === i
   );
+  settings.recentLangs = recent.slice(0, MAX_RECENT_LANGS);
+  saveSettings();
+  renderLanguageSelects();
+}
+
+/**
+ * Deux groupes : « Récentes » (5 dernières utilisées) puis toutes les langues
+ * par ordre alphabétique. Une langue récente apparaît dans les deux groupes ;
+ * select.value choisit la première option correspondante, donc celle du haut.
+ */
+function renderLanguageSelects() {
+  const label = (code) => languageLabel(code, uiLang);
+  const sorted = [...LANGUAGES].sort((a, b) => label(a.code).localeCompare(label(b.code), uiLang));
+  const recent = settings.recentLangs.filter((c) => LANGUAGE_BY_CODE[c]);
+
   for (const select of [el.langA, el.langB]) {
     select.textContent = "";
-    for (const lang of sorted) {
-      const opt = document.createElement("option");
-      opt.value = lang.code;
-      opt.textContent = languageLabel(lang.code, uiLang);
-      select.append(opt);
-    }
+    const addGroup = (title, codes) => {
+      const group = document.createElement("optgroup");
+      group.label = title;
+      for (const code of codes) group.append(new Option(label(code), code));
+      select.append(group);
+    };
+    if (recent.length) addGroup(t("langRecent"), recent);
+    addGroup(t("langAll"), sorted.map((l) => l.code));
   }
   el.langA.value = settings.langA;
   el.langB.value = settings.langB;
@@ -693,6 +862,13 @@ function renderSettings() {
   el.modelSelect.value = settings.model;
 
   el.rawMicToggle.checked = settings.rawMic;
+
+  // Taille de l'historique
+  el.historyLimitSelect.textContent = "";
+  for (const n of HISTORY_LIMITS) {
+    el.historyLimitSelect.append(new Option(n ? t("historyKeep", { n }) : t("historyKeepNone"), String(n)));
+  }
+  el.historyLimitSelect.value = String(settings.historyLimit);
 }
 
 function setUiLang(code) {
@@ -700,7 +876,10 @@ function setUiLang(code) {
   applyI18n();
   renderLanguageSelects();
   renderSettings();
-  turnLog.forEach((h) => h.button && (h.button.title = t("replay")));
+  turnLog.forEach((h) => {
+    if (h.button) h.button.title = t("replay");
+    h.node.querySelector(".meta").textContent = formatEntryTime(h.ts);
+  });
   refreshStatus();
 }
 
@@ -736,11 +915,6 @@ function initEventListeners() {
   el.mainBtn.addEventListener("click", () => (session.active ? stopSession() : startSession()));
   el.pauseBtn.addEventListener("click", togglePause);
   el.replayBtn.addEventListener("click", () => toggleReplay(replaying || lastReplayable()));
-  el.volume.addEventListener("input", () => {
-    settings.volume = Number(el.volume.value);
-    player.setVolume(settings.volume / 100);
-    saveSettings();
-  });
   el.langA.addEventListener("change", onLanguageChange);
   el.langB.addEventListener("change", onLanguageChange);
   el.swapBtn.addEventListener("click", swapLanguages);
@@ -794,7 +968,14 @@ function initEventListeners() {
     settings.rawMic = el.rawMicToggle.checked;
     saveSettings();
   });
+  el.historyLimitSelect.addEventListener("change", () => {
+    settings.historyLimit = Number(el.historyLimitSelect.value);
+    saveSettings();
+    saveHistory();
+  });
+  el.exportHistoryBtn.addEventListener("click", exportHistory);
   el.clearHistoryBtn.addEventListener("click", () => {
+    if (!confirm(t("historyClearConfirm"))) return;
     clearHistory();
     el.settings.close();
   });
@@ -826,7 +1007,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   applyI18n();
   renderLanguageSelects();
   renderSettings();
-  el.volume.value = settings.volume;
+  loadHistory();
+  updateReplayButton();
   initEventListeners();
   refreshStatus();
 

@@ -40,7 +40,10 @@
       <button id="replayBtn" class="side-btn" data-i18n-title="replay" disabled>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>
       </button>
-      <button id="mainBtn" class="main-btn" data-i18n="start">Start</button>
+      <button id="mainBtn" class="main-btn">
+        <svg id="mainIcon" class="main-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/></svg>
+        <span id="mainLabel" class="main-label" data-i18n="start">Start</span>
+      </button>
       <button id="pauseBtn" class="side-btn" data-i18n-title="pause" disabled>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
       </button>
@@ -54,11 +57,6 @@
         <div id="lineOut" class="line-out"></div>
       </div>
       <div id="subtitlesLog" class="subtitles-log"></div>
-    </div>
-
-    <div class="volume-row">
-      <label for="volume" data-i18n="volume">Volume</label>
-      <input type="range" id="volume" min="0" max="100" value="80" />
     </div>
   </div>
 
@@ -128,7 +126,11 @@
     <label class="check"><input type="checkbox" id="rawMicToggle" /> <span data-i18n="setRawMic"></span></label>
     <p class="hint" data-i18n="setRawMicHint"></p>
 
+    <h3 data-i18n="historyTitle"></h3>
+    <label class="field"><span data-i18n="historySize"></span><select id="historyLimitSelect"></select></label>
+    <p class="hint" data-i18n="historyHint"></p>
     <div class="actions left">
+      <button id="exportHistoryBtn" data-i18n="historyExport"></button>
       <button id="clearHistoryBtn" data-i18n="setClearHistory"></button>
     </div>
     <p class="hint" data-i18n="setAbout"></p>
